@@ -1,0 +1,302 @@
+---
+title: "SN_Models_Final"
+author: "Suganya Natarajan"
+date: "2023-07-15"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages("corrplot")
+```
+
+```{r}
+rm(list = ls())
+
+df <- read.csv("C:/Users/sugan/Downloads/bank_marketing_uci/bank/bank-full.csv", sep=';')
+
+library(dplyr)
+library(tidyverse)
+library(scales)
+library(caret)
+library(ROSE)
+library(e1071)
+library(fastDummies)
+#library(corrplot)
+
+#----------------------------------------------------------------------------------------------------------
+```
+
+```{r}
+
+#CLEANING AND DATA TRANSFORMATION
+#check for missing values
+colSums(is.na(df))
+#from the output we can see that there are no NULL values for any attribute 
+
+#however there are a lot of unknown values 
+df %>%
+  summarise_all(list(~sum(. == "unknown")))
+
+#Since over half the data has unknowns for poutcome, we will remove the entire column (not useful in predicting closing probability)
+#There is quite a alot of unknows for contact method as well, remove entire column (not using this variable to predict closing probability )
+df = subset(df, select = -c(poutcome, contact))
+#There are also a few unknowns for job and education
+##we will simply remove these rows (288+ 1875)with unknowns
+##Note that deleting rows/data for missing data results in data loss and may introduce potential bias
+##But in this case we have well over 45,000 observations and removing about 1200 should not bias the data
+table(df$y)
+##original data has 13.24 success rate 
+df <- df[df$job != "unknown" & df$education != "unknown", ]
+table(df$y)
+##after removal of rows we still have 13.15% success rate 
+##so we are nto really biasing the data, difference is only 0.09% so we should be fine to move forward 
+
+#we will also remove duration column because duration of a call is an aspect that cannot be decided before calling customers
+df = subset(df, select = -c(duration))
+
+
+as.data.frame(table(df$previous))
+as.data.frame(table(df$pdays))
+df = subset(df, select = -c(pdays))
+#after looking at a frequency tabel, i removed pdays since previous may hold valuable data in relationship to our problem 
+
+#OUTLIERS FOR RELEVANT NUMERIC ATTRIBUTES 
+#unique values 
+apply(df,2,function(x) length(unique(x)))
+#boxplots
+boxplot(df$balance, df$campaign, df$previous)
+par(mfrow=c(2,2))
+boxplot(df$balance, xlab = "Balance")
+boxplot(df$campaign, xlab = "Campaign")
+boxplot(df$previous, xlab = "Previous")
+# it seems like there are a lot of outliers for each numeric attribute, especially Balance
+# however we cannot say for sure they are outliers without other conext 
+summary(df$balance)
+ggplot(df,aes(x = df$balance)) + geom_histogram(aes(y = after_stat(count / sum(count))), color="black", fill="light blue", binwidth = 100) + 
+  labs(title = "Balance Amount Distribution") + xlim(-1000,10000) +
+  stat_bin(
+    binwidth = 100, geom = "text", color = "black",
+    aes(y = after_stat(count / sum(count)), 
+        label = scales::percent(after_stat(count / sum(count)))),
+    position = position_stack(vjust = 0.9)
+  )+
+  scale_y_continuous(labels = scales::percent)
+#based on this plot lets only include observations with balances from -1000 to 10,000
+exclude <- c(-8020:-1001, 10001:102128)
+
+df <- df %>%
+  filter(!(df$balance %in% exclude))
+summary(df$balance)
+as.data.frame(table(df$y))
+#yes responses are still 13.08% which is still good 
+```
+
+```{r}
+#CHANGE FROM CHR TO FACTOR 
+df$job = as.factor(df$job)
+df$marital = as.factor(df$marital)
+df$education = as.factor(df$education)
+df$default = as.factor(df$default)
+df$housing = as.factor(df$housing)
+df$loan = as.factor(df$loan)
+df$y = as.factor(df$y)
+
+## ADDING YEAR & DATE VARIABLE 
+#adding addtional variables 
+df <- df %>% mutate(sequence = seq_along(month))
+
+# Vector for storing year
+years <- rep(2008, nrow(df))
+
+# Iterating through  "month" column - assign year
+for (i in 1:(nrow(df) - 1)) {
+  month <- df$month[i]
+  if (month == "dec" && df$month[i + 1] == "jan") {
+    years[(i + 1):nrow(df)] <- years[i] + 1
+  }
+}
+
+# Adding "year" column - maintaining the order
+df <- df %>% mutate(year = years) %>%
+  arrange(sequence) %>%
+  select(-sequence)
+
+# For 2008-2010 dataset , creating Date using month and day and year we assigned 
+df$Date <- as.Date(paste(df$year, df$month, df$day, sep = "-"), format = "%Y-%b-%d")
+
+# DON'T THINK ITS NECESSARY TO INCLUDE WEEKDAYS
+# Adding Weekday as a new attribute to the df
+# df$Weekday <- weekdays(df$Date)
+```
+
+
+
+```{r}
+
+#CHECKING FOR BIAS/IMBALANCE
+# The dataset is already biased in that there are a lot of unscessful responses compared to sucesses
+# checking target imbalance 
+tgt_imb <- table(df$y)
+tgt_imb
+
+#SPLIT DATA AND TREATING IMBALANCE USING ROSE 
+# Random seeding so every run gives consistent data set 
+# set.seed(123)
+# 
+# # Splitting the data into train and test sets
+# train_indices <- createDataPartition(df$y, p = 0.7, list = FALSE)
+# train_data <- df[train_indices, ]
+# test_data <- df[-train_indices, ]
+
+set.seed(123)
+index<-createDataPartition(df$y,p=0.7,list=FALSE)
+train<-df[index,]
+test<-df[-index,]
+
+#count of responses for yes and no are imbalanced for train data 
+train_tgt_imb <- table(train$y)
+print(train_tgt_imb)
+
+test_tgt_imb <- table(test$y)
+print(test_tgt_imb)
+
+#undersampled-sample the majority class with ROSE
+train_balsam <- ovun.sample(y ~ ., data = train, seed = 123, method = "both")$data
+table(train_balsam$y)
+#responses are now balanced 
+```
+
+### Randonforest Model 
+```{r}
+
+library(randomForest)
+
+train_balsam$y <- as.factor(train_balsam$y)
+test$y <- as.factor(test$y)
+
+# Random Forest model training
+model <- randomForest(y ~ ., data = train_balsam)
+
+# Predicting test data
+predictions <- predict(model, newdata = test)
+
+# Checking model performance
+confusionMatrix(predictions, reference = test$y)
+
+```
+
+### Random Forest Model1 : INFERENCE
+
+
+
+```{r}
+str(train_balsam)
+
+```
+### Random Forest Model 2 : Tuned with cross validation
+
+```{r}
+
+control <- trainControl(method="cv", number=5)
+tunegrid <- expand.grid(.mtry = 6:12)
+set.seed(2)
+
+rf_model_tuned <- train(y~., 
+          data=train_balsam, method="rf", 
+          metric="accuracy", 
+          tuneGrid=tunegrid, 
+          ntree = 15,
+          trControl=control)
+
+predictions_tuned <- predict(rf_model_tuned, newdata = test)
+
+
+confusionMatrix(predictions_tuned, test$y)
+
+```
+### Variable Importance Random Forest Model1: 
+```{r}
+importance <- varImp(rf_model_tuned)
+print(importance)
+
+```
+```{r}
+
+importance_untuned <- varImp(model)
+print(importance_untuned)
+
+```
+
+
+### Looking at the Variable importance , we see the Date related attributes  as the most importnat ones. But it doesn't make sense in reality to base the decision of customer taking taking term deposit based on the date . So we decided to remove  date related attributes from the dataset.
+
+
+```{r}
+# Remove unwanted variables from the dataset
+train_manual <- subset(train_balsam, select = -c(day, year, Date, month))
+
+test_manual <- subset(test, select = -c( day, year, Date, month))
+
+```
+
+### Randonforest Model3 - After removing Date fields from the datasets.
+```{r}
+
+library(randomForest)
+
+train_manual$y <- as.factor(train_manual$y)
+test_manual$y <- as.factor(test_manual$y)
+set.seed(2)
+
+# Random Forest model training
+model3 <- randomForest(y ~ ., data = train_manual)
+
+# Predicting test data
+predictions3 <- predict(model3, newdata = test_manual)
+
+# Checking model performance
+confusionMatrix(predictions3, reference = test_manual$y)
+
+```
+### Variable Importance Random Forest Model 3
+```{r}
+importance <- varImp(model3)
+print(importance)
+
+```
+
+### Random Forest Model 4 : After removing Date fields and Cross Validation applied
+
+
+```{r}
+
+control <- trainControl(method="cv", number=5)
+tunegrid <- expand.grid(.mtry = 6:12)
+set.seed(2)
+
+rf_model_tuned2 <- train(y~., 
+          data=train_manual, method="rf", 
+          metric="accuracy", 
+          tuneGrid=tunegrid, 
+          ntree = 15,
+          trControl=control)
+
+predictions_tuned2 <- predict(rf_model_tuned2, newdata = test_manual)
+
+
+confusionMatrix(predictions_tuned2, test_manual$y)
+
+```
+
+### Variable Importance Random Forest Model 3
+```{r}
+importance <- varImp(rf_model_tuned2)
+print(importance)
+
+```

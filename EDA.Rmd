@@ -1,0 +1,551 @@
+---
+title: "Portuguese Bank Telemarketing Classification & Closing Probability"
+author: "Michael Holley, Suganya Natarajan, Neha Shah, Divya Chandrasekaran"
+date: "`r format(Sys.time(), '%c %Z')`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+
+```
+
+## <span style="color:red">Background</span>
+
+Market Segmentation is a critical component of any modern marketing mix. By identifying and defining discrete marketing segments of a target market, marketers can specialize their approaches to messaging, channel selection, seasonality, and other factors based on the preferences and attitudes associated with the demographic identifiers associated with each segment. When done properly, this leads to a more efficient deployment of marketing resources.With the advent of large marketing databases, the challenge of revenue projection has fallen on the shoulders of marketers more frequently. Using modern modelling techniques, marketers can produce prescriptive closing rates for consumers at various stages of the sales pipeline, providing financial executives with a powerful tool to use in projecting earnings.We have chosen to examine a dataset of results from a multiyear telemarketing campaign to procure new term deposits. This particular dataset provides two useful features for analysis: (1) the nature of the product being sold provides an attribute-rich profile for each potential customer, and (2) the long-term nature of the sales process allows for analysis of potential seasonal and other time-dependent effects, both of which are invaluable in forecasting.
+Our primary research question is:Can effective marketing segments be derived from observing the attributes of respondents to previous marketing campaigns?
+We will also research the following supporting questions:
+1. Can attributes of previous buyers be used to build a model to predict closing probability?
+2. Does seasonality have a substantial effect on closing, independent of time spent in the pipeline?
+
+## <span style="color:red">Data Description</span>
+
+We will analyze the following datasets: bank-full and bank-additional-full. Bank-additional-full has additional social and economic attributes that are not included in the bank-full data. Also bank-full has a balance attributed that is not included in bank-additional-full dataset. Across both datasets, there are 22 variables. 
+
+**INPUT VARIABLES**
+
+1. **age**: (numeric)
+2. **job**: type of job (categorical: 'admin.', 'blue-collar', 'entrepreneur', 'housemaid', 'management', 'retired', 'self-employed', 'services', 'student', 'technician', 'unemployed', 'unknown')
+3. **marital** : marital status (categorical: 'divorced','married','single','unknown'; note: 'divorced' means divorced or widowed)
+4. **education**: (categorical:'basic.4y','basic.6y','basic.9y','high.school','illiterate','professional.course','university.degree','unknown')
+5. **default**: has credit in default? (categorical: 'no','yes','unknown')
+6. **housing**: has housing loan? (categorical: 'no','yes','unknown')
+7. **loan**: has personal loan? (categorical: 'no','yes','unknown')
+8. **balance**: current balance in client's account (Note: this variable is only in )
+
+Related with the last contact of the current campaign:
+
+9. **contact**: contact communication type (categorical: 'cellular','telephone')
+10. **month**: last contact month of year (categorical: 'jan', 'feb', 'mar', ..., 'nov', 'dec')
+11. **day_of_week**: last contact day of the week (categorical: 'mon','tue','wed','thu','fri')
+12. **duration**: last contact duration, in seconds (numeric). Important note:  this attribute highly affects the output target (e.g., if duration=0 then y='no'). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, this input should only be included for benchmark purposes and should be discarded if the intention is to have a realistic predictive model.
+
+Other attributes
+
+13. **campaign**: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+14. **pdays**: number of days that passed by after the client was last contacted from a previous campaign (numeric; 999 means client was not previously contacted)
+15. **previous**: number of contacts performed before this campaign and for this client (numeric)
+16. **poutcome**: outcome of the previous marketing campaign (categorical: 'failure', 'nonexistent', 'success')
+   
+Social and economic context attributes
+
+17. **emp.var.rate**: employment variation rate - quarterly indicator (numeric)
+18. **cons.price.idx**: consumer price index - monthly indicator (numeric)
+19. **cons.conf.idx**: consumer confidence index - monthly indicator (numeric)
+20. **euribor3m**: euribor 3 month rate - daily indicator (numeric)
+21. **nr.employed**: number of employees - quarterly indicator (numeric)
+
+**OUTPUT VARIABLES**
+
+22. **y**: has the client subscribed a term deposit? (binary: 'yes','no')
+
+#### *<span style="color:red">Installing Required Packages and Reading Data</span>*
+```{r}
+rm(list = ls())
+
+suppressWarnings(suppressMessages(library(knitr)))
+# install.packages("tidyverse")
+suppressWarnings(suppressMessages(library(tidyverse)))  
+# install.packages("psych")
+suppressWarnings(suppressMessages(library(psych)))  
+#install.packages("Ecdat")
+suppressWarnings(suppressMessages(library(Ecdat)))  
+suppressWarnings(suppressMessages(library(ggplot2)))  
+#install.packages('ggthemes')
+suppressWarnings(suppressMessages(library(ggthemes)))  
+#install.packages('corrplot')
+suppressWarnings(suppressMessages(library(corrplot)))  
+suppressWarnings(suppressMessages(library(rlang)))  
+
+#Reading Reading Both Portugese Bank Marketing datasets
+bank_idx <- read.csv("C:\\Users\\nehas\\Documents\\GT 2023\\MGT 6203\\Project\\bank-additional-full.csv", sep=';')
+kable(head(bank_idx))
+bank_bal <- read.csv("C:\\Users\\nehas\\Documents\\GT 2023\\MGT 6203\\Project\\bank-full.csv", sep=';')
+kable(head(bank_bal))
+```
+
+<span style="color:blue"> Previewing both datasets, we can see the differences between the variables included or excluded.</span>
+
+## <span style="color:red">Exploratory Data Analysis (EDA)</span>
+```{r}
+# Joining to check for matches (the below join returns only a single match):
+bank_joined <- merge(bank_idx, bank_bal, by=c("age", "job", "marital", "education", "default", "housing", "loan", "contact", "month", "duration"))
+
+# Copying each dataset for wrangling/analysis (df1 = set with indices, df2 = set with balance)
+df1 <- bank_idx
+df2 <- bank_bal
+# Convert Target Variable to binary values
+
+df1$y <- ifelse(df1$y == 'no', 0, 1)
+df2$y <- ifelse(df2$y == 'no', 0, 1)
+
+#Summary Statistics 
+summary(df1)
+```
+
+<span style="color:blue"> We attempted to merge both datasets to see if there were any overlapping results. We found only a single match between both datasets when joining across several of the 22 variables. These led us to concluded both data sets are collected from totally different sets of samples and the 1 match we found was purely coincidence. We will therefore perfume some explanatory analysis on both datasets individually and select one which will help us answer our question. </span>
+
+#### *<span style="color:red">Univariate Analysis</span>*
+
+# Checking Frequency distribution of Job, Marital, Education, Default, Housing, Loan, Contact, and Day of Week in df1:
+
+```{r}
+cat_vars <- c("job", "marital", "education", "default", "housing", "loan","contact", "day_of_week")
+for (var in cat_vars) {
+  cat("\nFrequency distribution of", var, ":\n")
+  
+  # Calculate the frequency table
+  freq_table <- table(df1[[var]])
+  print(freq_table)
+  
+  # Build the corresponding bar plot
+  df1[,var] <- fct_infreq(as.factor(df1[,var]))
+  current_plot <- ggplot(df1, aes(x=.data[[var]])) + geom_bar() + theme_economist()
+  print(current_plot)
+}
+```
+
+***<span style="color:blue">Observations from the Frequency Distribution of df1 </span>***
+
+<span style="color:blue">**Job:** Examining the job variable, we see the major category belongs to "admin.", "blue-collar", and "technician". The job categories that are least common are "entrepreneur", "housemaid", and "unknown".</span>
+
+<span style="color:blue">**Marital:** Major population of customers in the dataset are married, followed by singles. Divorced customers also are a large portion. </span>
+
+<span style="color:blue">**Education:** Education levels that are majorly seen are "university.degree", "high.school", and "basic.9y". Small population of customers with an "illiterate" education level.</span>
+
+<span style="color:blue">**Default:** Large volume of customers have "no" default status, while very few have a "yes" status. We also see a small number of customers with an "unknown" default status.</span>
+
+<span style="color:blue">**Housing:** Large population of customers have a housing loan "yes", while a smaller population do not have a housing loan ("no"). We also see a small population of individuals with "unknown" housing status.</span>
+
+<span style="color:blue">**Loan:** Most customers do not have a personal loan ("no"), and some customers have personal loan ("yes"). We also see a small population of customers with an "unknown" loan status.</span>
+
+<span style="color:blue">**Contact:** We see the most common contact mechanism is via cellular phone, followed by a telephone.</span>
+
+<span style="color:blue">**Day of Week:** Final contacts occurred most often on Thursday, and least often on Friday. </span>
+
+```{r}
+#Testing normality of Consumer Price and Consumer Confidence indices:
+if (!require(nortest)) install.packages("nortest")
+suppressWarnings(suppressMessages(library(nortest)))
+
+ggplot(df1, aes(x=cons.price.idx)) + geom_histogram()
+qqnorm(df1$cons.price.idx)
+qqline(df1$cons.price.idx)
+ad.test(df1$cons.price.idx)
+
+ggplot(df1, aes(x=cons.conf.idx)) + geom_histogram()
+qqnorm(df1$cons.conf.idx)
+qqline(df1$cons.conf.idx)
+ad.test(df1$cons.conf.idx)
+```
+
+<span style="color:blue">Both Consumer Price and Consumer Confidence indices appear to be skewed to the right.Now we will explore the second dataset.</span>
+
+```{r}
+summary(df2)
+# Checking Frequency distribution of Job, Marital, Education, Default, Housing, Loan and Contact in df2:
+
+cat_vars <- c("job", "marital", "education", "default", "housing", "loan","contact")
+for (var in cat_vars) {
+  cat("\nFrequency distribution of", var, ":\n")
+  
+  # Calculate the frequency table
+  freq_table <- table(df2[[var]])
+  print(freq_table)
+  
+  # Build the corresponding bar plot
+  df2[,var] <- fct_infreq(as.factor(df2[,var]))
+  current_plot <- ggplot(df2, aes(x=.data[[var]])) + geom_bar() + theme_economist()
+  print(current_plot)
+}
+```
+
+***<span style="color:blue">Observations from the Frequency Distribution of df2 </span>***
+
+<span style="color:blue">**Job:** Examining the job variable, we see the major category belongs to  "blue-collar", "management", and "technician". The job categories that are least common are "student", "housemaid", and "unknown".</span>
+
+<span style="color:blue">**Marital:** Major population of customers in the dataset are married, followed by singles. Divorced customers also are a large portion.</span>
+
+<span style="color:blue">**Education:** The plurality of respondents had a secondary level of education, with secondary + tertiary responses making up a large majority of the set. There is a small but notable amount of unknown responses.</span>
+
+<span style="color:blue">**Default:** The overwhelming majority of respondents have no previous default in their history</span>
+
+<span style="color:blue">**Housing:** The majority of respondents do have a housing loan, but there is also a large amount without</span>
+
+<span style="color:blue">**Loan:** Most customers do not have a personal loan ("no"), and some customers have personal loan ("yes").</span>
+
+<span style="color:blue">**Contact:** We see the most common contact mechanism is via cellular phone, followed by a telephone. There is a large amount of unknown responses</span>
+
+
+***<span style="color:blue">Notable differences between df1 and df2</span>***
+
+<span style="color:blue">- df1 includes consumer financial indices, df2 includes balance</span>
+
+<span style="color:blue">- df1 includes 'day_of_week', df2 instead includes 'day', which is an integer between 1 and 31. I'm guessing this means day of month?</span>
+
+<span style="color:blue">- df2's levels of education are less precise than df1's levels of education</span>
+
+<span style="color:blue">- df1's 'default', 'housing', and 'loan' responses include unknowns, but df2's do not</span>
+
+<span style="color:blue">- df2's 'contact' responses includes unknowns, but df1's do not</span>
+
+***<span style="color:blue">OBERVATIONS REGARDING THE COMPARISON OF THE DATASETS</span>***
+
+<span style="color:blue">- Lack of matches when merged on just a few columns suggest that these data represent nearly or entirely distinct samples</span>
+<span style="color:blue">- Significant differences in the range of values is further proof that these datasets cannot be meaningfully merged</span>
+
+#### *<span style="color:red">Bivariate Analysis</span>*
+
+```{r}
+# Some Bivariate Analysis for df1 
+
+# Contact Method  Vs Campaign  
+ggplot(df1, aes(x = contact, y = campaign)) + geom_boxplot(fill = "lightblue", color = "black") + labs(x = "Contact Method", y = "Campaign") +ggtitle("Boxplot of Campaign by Contact Method")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. For both Cellular and Telephone contact methods we see many outliers outside of the whiskers of the box plot.default()</span>
+
+<span style="color:blue">2. Median for both contact methods is similar which indicates median number of campaigns is consistent across both contact methods.</span>
+
+<span style="color:blue">3. Size of both boxes is similar whoich indicates spread of campaign within the Inter Quartilke range is comparable.</span>
+
+```{r}
+# Target Vs campaign
+colors <- c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3")
+ggplot(df1, aes(x = loan, fill = factor(y))) +
+  geom_bar(position = "stack") +
+  labs(x = "Loan", y = "Count", fill = "y") +
+  scale_fill_manual(values = colors) +
+  theme_minimal()
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. From the higher blue line we can infer that majority of the campaign participant had No Loans , and less than 50% of the customers had a LOan and very few where loan status is unknown.</span>
+
+<span style="color:blue">2. More campaign success rate is also seen with customers with No personal loans , out of the total successful campaigns.</span>
+
+```{r}
+# Observation for Target Variable Vs Choose a few that are intersting ....
+
+# Job Vs Education - Stacked Bar Plot of Job and Education
+
+ggplot(df1, aes(x=education, fill=job)) + geom_bar()
+model.matrix(~0+., data=subset(df1, select=c('education', 'job'))) %>%
+  cor(use="pairwise.complete.obs") %>%
+  corrplot()
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. Administrative and management jobs appear to corrlate strongly with higher levels of education</span>
+
+<span style="color:blue">2. Blue Collar and Technician jobs appear to correlate strongly with middle levels of education</span>
+
+```{r}
+# Marital Status Vs Loan  - Stacked Bar Plot of Marital Status and Loan
+
+ggplot(df1, aes(x=marital, fill=loan)) + geom_bar()
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. The distribution of loans appears to be roughly equivalent across categories of marital status</span>
+
+```{r}
+# Day of week Vs Previous Contacts - Boxplot of Duration by Month
+
+# Outcome of the previous marketing campaign  Vs Consumer price index  --Boxplot of Cons.Price.Idx by Poutcome
+
+ggplot(df1, aes(x=cons.price.idx, y=poutcome)) + geom_boxplot()
+
+#  Employment variation rate and Number of Employees  --Scatter plot of Emp.Var.Rate vs Nr.Employed
+
+# Multivariate Heat map of all variables to see correlation 
+
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. Successful conversions appear to correlate with low consumer price index</span>
+
+```{r}
+# Bivariate Analysis for Df2
+
+#Age Vs Campaign Duration
+#Lets see how the age responds to the campaign duration, relationship between them.
+
+# It was difficult to visualize all age, so Creating age groups
+
+df1$age_group <- cut(df1$age, breaks = c(0, 10, 20, 30, 40, 50, 60, 70, 100), labels = c("0-10", "11-20", "21-30", "31-40", "41-50", "51-60", "61-70", "71+"), right = FALSE)
+
+# Calculate campaign success rate by age group
+success_rate_by_age_group <- df1 %>%
+  group_by(age_group) %>%
+  summarise(success_rate = mean(campaign))
+
+# Create a bar plot of campaign success rate by age group
+ggplot(success_rate_by_age_group, aes(x = age_group, y = success_rate)) +
+  geom_bar(stat = "identity", fill = "#009688", color = "black") +
+  labs(x = "Age Group", y = "Campaign Success Rate") +
+  ggtitle("Campaign Success Rate by Age Group")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. Campaign has been a success to the majority of people between age 25 to 60.</span>
+<span style="color:blue">2. Age 51 to 60 has the highest success rate followed by the middle and young age.</span>
+
+```{r}
+#Job Vs Age
+#Let us see the relationship between the job or the employment and age.
+
+# Calculating the average age
+avg_age_by_job <- df1 %>%
+  group_by(job) %>%
+  summarise(avg_age = mean(age))
+
+# Define custom fill colors
+fill_colors <- c("#C9E8F5", "#AEDCF2", "#95D0EF", "#7AC4EC", "#60B8E9", "#49ACE6", "#33A0E3", "#1E94E0", "#0888DD", "#007CDA", "#0070D7", "#0064D4")
+# Creating a bar plot
+ggplot(avg_age_by_job, aes(x = job, y = avg_age, fill = job)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = fill_colors) +
+  labs(x = "Job Code", y = "Average Age") +
+  ggtitle("Average Age of Customers by Job Code")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue"> The largest customer community is "Retired" and the lowest customer base are the"Students". We can focus on the retired community, since it has a large customer base.</span>
+
+```{r}
+# Job & Target Variable**
+# Lets us see the relation between Job and the Target variable, to understand which occupation has more effect in subscribing the term deposit.
+
+
+colors <- c("#FFC107", "#3F51B5", "#009688", "#FF5722", "#9C27B0", "#4CAF50", "#795548", "#607D8B")
+
+ggplot(df1, aes(x = job, fill = factor(y))) +
+  geom_bar(position = "stack") +
+  labs(x = "Job", y = "Count", fill = "Outcome") +
+  scale_fill_manual(values = colors) +
+  theme_minimal()
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. The term deposits are mostly made by the Retired & Student population where close to 25% of the population has made term deposits among all other groups.</span>
+<span style="color:blue">2. Followed by retired communtity, more term deposuts were made by Admin, blue collar and Technician which are close to 15 percent.</span>
+
+```{r}
+# Previous Outcome
+#Let us find out how well the previous campaign outcome has worked
+
+colors <- c("#FFC107", "#3F51B5", "#009688", "#FF5722", "#9C27B0", "#4CAF50", "#795548", "#607D8B")
+
+# Calculate the count and percentage values
+poutcome_counts <- df1 %>% 
+  group_by(poutcome) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Create the bar plot with different colors
+ggplot(poutcome_counts, aes(x = poutcome, y = count, fill = poutcome)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colors) +
+  labs(x = "Previous Campaign Outcome", y = "Count") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), vjust = -0.5) +
+  theme_minimal()
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. From the bar plot we can see that 86 percent of data doesnt exist, campaign shows 3.3% success rate. We cannot consider this because the data has not been collected completely.</span>
+<span style="color:blue">2. Looks like there is no point in seeing its relationship between other features.</span>
+
+<span style="color:blue">We will now do bivariate analysis with the 2nd dataframe that has balance column.</span>
+
+```{r}
+#Age Vs Campaign Duration
+#Lets see how the age responds to the campaign duration, relationship between them.
+
+# It was difficult to visualize all age, so Creating age groups
+
+df2$age_group <- cut(df2$age, breaks = c(0, 10, 20, 30, 40, 50, 60, 70, 100), labels = c("0-10", "11-20", "21-30", "31-40", "41-50", "51-60", "61-70", "71+"), right = FALSE)
+
+# Calculate campaign success rate by age group
+success_rate_by_age_group <- df2 %>%
+  group_by(age_group) %>%
+  summarise(success_rate = mean(campaign))
+
+# Create a bar plot of campaign success rate by age group
+ggplot(success_rate_by_age_group, aes(x = age_group, y = success_rate)) +
+  geom_bar(stat = "identity", fill = "#009688", color = "black") +
+  labs(x = "Age Group", y = "Campaign Success Rate") +
+  ggtitle("Campaign Success Rate by Age Group")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. Campaign looks to be highly successful for the age between 41-50.</span>
+
+<span style="color:blue">2. Campaign has been a success to the majority of people between age 31 to 60.</span>
+
+```{r}
+#Job Vs Age
+# Let us see the relationship between the job or the employment and age.
+
+# Calculating the average age
+avg_age_by_job <- df2 %>%
+  group_by(job) %>%
+  summarise(avg_age = mean(age))
+
+# Define custom fill colors
+fill_colors <- c("#C9E8F5", "#AEDCF2", "#95D0EF", "#7AC4EC", "#60B8E9", "#49ACE6", "#33A0E3", "#1E94E0", "#0888DD", "#007CDA", "#0070D7", "#0064D4")
+# Creating a bar plot
+ggplot(avg_age_by_job, aes(x = job, y = avg_age, fill = job)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = fill_colors) +
+  labs(x = "Job Code", y = "Average Age") +
+  ggtitle("Average Age of Customers by Job Code")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. Only the retired community is above age 60. All other occupation is below 50.</span>
+
+<span style="color:blue">2. Most people who are in a job has an average age of 40.</span>
+
+```{r}
+# Job & Target Variable
+# Lets us see the relation between Job and the Target variable, to understand which occupation has more effect in subscribing the term deposit.
+
+colors <- c("#FFC107", "#3F51B5", "#009688", "#FF5722", "#9C27B0", "#4CAF50", "#795548", "#607D8B")
+
+ggplot(df2, aes(x = job, fill = factor(y))) +
+  geom_bar(position = "stack") +
+  labs(x = "Job", y = "Count", fill = "Outcome") +
+  scale_fill_manual(values = colors) +
+  theme_minimal()
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. The term deposits are mostly made by the Retired, Management & Student population where close to 25% of the population has made term deposits among all other groups.</span>
+
+<span style="color:blue">2. Followed by retired communtity, more term deposits were made by Admin, blue collar and Unemployed which are close to 15 percent.</span>
+
+```{r}
+# ** Previous Outcome**
+#Let us find out how well the previous campaign outcome has worked
+
+colors <- c("#FFC107", "#3F51B5", "#009688", "#FF5722", "#9C27B0", "#4CAF50", "#795548", "#607D8B")
+
+# Calculate the count and percentage values
+poutcome_counts <- df2 %>% 
+  group_by(poutcome) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Create the bar plot with different colors
+ggplot(poutcome_counts, aes(x = poutcome, y = count, fill = poutcome)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colors) +
+  labs(x = "Previous Campaign Outcome", y = "Count") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), vjust = -0.5) +
+  theme_minimal()
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. From the bar plot we can see that 81 percent of data shows"Unknown" assuming that data doesn't exist, campaign shows 3.3% success rate. We cannot consider this because the data has not been collected completely.</span>
+
+<span style="color:blue">2. Looks like there is no point in seeing its relationship between other features.</span>
+
+```{r}
+# Balance Vs Term deposit
+# Lets see how the account balance affects the term deposits.
+
+mu2 <- df2 %>% 
+  group_by(y) %>% 
+  summarize(grp.mean2 = mean(balance))
+
+# Create the bar plot
+ggplot(df2, aes(x = balance)) +
+  geom_bar(color = "#3F51B5", fill = "#3F51B5", stat = "count") +
+  facet_grid(cols = vars(y)) +
+  ggtitle('Balance Bar Plot') +
+  ylab('Count') +
+  xlab('Balance') +
+  geom_vline(data = mu2, aes(xintercept = grp.mean2), color = "#4CAF50", linetype = "dashed")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. We can see that the people with term subscription tend to have lower balance than people with higher balance.</span>
+
+```{r}
+# Term deposit Vs Age
+# We can see how the age has effect in subscribing for a term deposit
+
+df2$age_group <- cut(df2$age, breaks = c(0, 10, 20, 30, 40, 50, 60, 70, 100), labels = c("0-10", "11-20", "21-30", "31-40", "41-50", "51-60", "61-70", "71+"), right = FALSE)
+
+# calculating the count of term deposit by age group
+count_by_age_deposit <- df2 %>%
+  group_by(age_group, y) %>%
+  summarise(count = n())
+
+# Create a bar plot of term deposit count by age group
+ggplot(count_by_age_deposit, aes(x = age_group, y = count, fill = y)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  labs(x = "Age Group", y = "Count", fill = "Term Deposit") +
+  ggtitle("Term Deposit Count by Age Group")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. Term deposits are accepted highly among the age group of 31 to 40.</span>
+
+<span style="color:blue">2. Based on the number of Retired age group it looks close to half of the population has subscribed for a term deposit.</span>
+
+```{r}
+# Let us do a bivariate analysis between campaign and term deposit to see whether the campaign helped in getting a subscription
+
+ggplot(data = df2, aes(x = campaign, fill = y)) +
+  geom_bar(position = "stack") +
+  ggtitle("Successful term deposits") +
+  xlab("Number of Contacts made during the Campaign") +
+  ylab("Count") +
+  xlim(c(1, 30)) +
+  guides(fill = guide_legend(title = "Number of successful Term Deposit")) +
+  theme(legend.position = "bottom")
+```
+
+<span style="color:blue">**OBSERVATION:**</span>
+
+<span style="color:blue">1. Most of the success in campaign for the number of contacts made happens within the first 3 contacts made.</span>
+
+<span style="color:blue">2. Looks like there is zero success after making 8 number of contacts. So it is better to focus more on first 3 contacts during the campaign.</span>
